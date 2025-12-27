@@ -383,5 +383,9 @@ def delete_env(env_id: str) -> Dict[str, Any]:
     return _delete_env(env_id)
 
 
-if __name__ == "__main__":
+def main():
     mcp.run()
+
+
+if __name__ == "__main__":
+    main()

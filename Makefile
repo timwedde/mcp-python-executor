@@ -2,32 +2,28 @@
 
 # Default target: start the MCP server
 run:
-	uv run server.py
+	uv run mcp-python-executor
 
 # Install dependencies
 install:
 	uv sync
 
-# Run tests
+# Run tests with coverage
 test:
-	uv run pytest tests/
+	uv run pytest
 
-# Linting
-lint:
-	uv run ruff check .
-
-# Formatting
-format:
-	uv run ruff format .
-
-# Type checking
-typecheck:
-	uv run ty check
+# Open coverage report in browser
+coverage: test
+	open htmlcov/index.html
 
 # Run all quality checks
 check-all: lint format typecheck test
 
-# Clean up local environments and virtual env
+# Clean up local environments, virtual env, and coverage files
 clean:
 	rm -rf .venv
 	rm -rf ~/.mcp-python-executor/envs/*
+	rm -rf .pytest_cache
+	rm -rf .coverage
+	rm -rf htmlcov
+

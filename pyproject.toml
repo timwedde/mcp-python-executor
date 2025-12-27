@@ -9,9 +9,16 @@ dependencies = [
     "mcp[cli]>=1.25.0",
 ]
 
+[project.scripts]
+mcp-python-executor = "server:main"
+
+[tool.uv]
+package = true
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
     "ruff>=0.14.10",
     "ty>=0.0.7",
 ]
@@ -29,3 +36,19 @@ known-first-party = ["server"]
 
 [tool.ty]
 # ty is largely zero-config but we can specify options here if needed in the future
+
+[tool.pytest.ini_options]
+addopts = "--cov=server --cov-report=term-missing --cov-report=html"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["server"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
