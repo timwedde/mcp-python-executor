@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List, Optional, Union
 
 from fastmcp import FastMCP
-from mcp.types import ImageContent, TextContent
+from mcp.types import ImageContent
 
 # Initialize FastMCP server
 mcp = FastMCP("PythonExecutor")
@@ -37,9 +37,7 @@ def get_safe_file_path(env_path: Path, filename: str) -> Path:
     return requested_path
 
 
-def run_uv_command(
-    args: List[str], cwd: Optional[Path] = None
-) -> subprocess.CompletedProcess:
+def run_uv_command(args: List[str], cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
     """Run a uv command and return the result."""
     # Clean environment to avoid leakage from the server's own virtualenv
     env = os.environ.copy()
@@ -81,9 +79,7 @@ def _create_env(env_id: str, packages: Optional[List[str]] = None) -> str:
     if init_res.returncode != 0:
         # Cleanup on failure
         shutil.rmtree(env_path)
-        raise RuntimeError(
-            f"Failed to initialize environment {env_id}:\n{init_res.stderr}"
-        )
+        raise RuntimeError(f"Failed to initialize environment {env_id}:\n{init_res.stderr}")
 
     if packages:
         add_res = run_uv_command(["add"] + packages, cwd=env_path)
@@ -108,9 +104,7 @@ def _execute_python(
     if packages:
         add_res = run_uv_command(["add"] + packages, cwd=env_path)
         if add_res.returncode != 0:
-            raise RuntimeError(
-                f"Failed to add packages to environment {env_id}:\n{add_res.stderr}"
-            )
+            raise RuntimeError(f"Failed to add packages to environment {env_id}:\n{add_res.stderr}")
 
     file_path = get_safe_file_path(env_path, filename)
 
@@ -119,9 +113,7 @@ def _execute_python(
         file_path.write_text(code)
 
     if not file_path.exists():
-        raise FileNotFoundError(
-            f"File '{filename}' not found in environment '{env_id}'."
-        )
+        raise FileNotFoundError(f"File '{filename}' not found in environment '{env_id}'.")
 
     run_res = run_uv_command(["run", str(file_path)], cwd=env_path)
 
@@ -138,9 +130,7 @@ def _execute_python(
     )
 
     if run_res.returncode != 0:
-        raise RuntimeError(
-            f"Execution failed with exit code {run_res.returncode}:\n{output_text}"
-        )
+        raise RuntimeError(f"Execution failed with exit code {run_res.returncode}:\n{output_text}")
 
     return output_text
 
@@ -191,13 +181,12 @@ def _read_file(env_id: str, filename: str) -> Union[str, ImageContent]:
 
         if is_image:
             b64_data = base64.b64encode(data).decode("utf-8")
-            return ImageContent(
-                type="image", data=b64_data, mimeType=mime_type or "image/png"
-            )
+            return ImageContent(type="image", data=b64_data, mimeType=mime_type or "image/png")
 
         if is_binary:
             b64_data = base64.b64encode(data).decode("utf-8")
-            return f"Binary file ({mime_type or 'application/octet-stream'}). Base64 content:\n{b64_data}"
+            m_type = mime_type or "application/octet-stream"
+            return f"Binary file ({m_type}). Base64 content:\n{b64_data}"
 
         # Assume text
         try:
@@ -253,9 +242,7 @@ def _install_packages(env_id: str, packages: List[str]) -> str:
 
     res = run_uv_command(["add"] + packages, cwd=env_path)
     if res.returncode == 0:
-        return (
-            f"Successfully installed {', '.join(packages)} in environment '{env_id}'."
-        )
+        return f"Successfully installed {', '.join(packages)} in environment '{env_id}'."
     else:
         raise RuntimeError(f"Error installing packages:\n{res.stderr}")
 
@@ -267,9 +254,7 @@ def _remove_packages(env_id: str, packages: List[str]) -> str:
 
     res = run_uv_command(["remove"] + packages, cwd=env_path)
     if res.returncode == 0:
-        return (
-            f"Successfully removed {', '.join(packages)} from environment '{env_id}'."
-        )
+        return f"Successfully removed {', '.join(packages)} from environment '{env_id}'."
     else:
         raise RuntimeError(f"Error removing packages:\n{res.stderr}")
 

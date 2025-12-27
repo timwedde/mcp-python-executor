@@ -1,4 +1,4 @@
-.PHONY: run install test clean
+.PHONY: run install test clean lint format typecheck check-all
 
 # Default target: start the MCP server
 run:
@@ -11,6 +11,21 @@ install:
 # Run tests
 test:
 	uv run python test_server.py
+
+# Linting
+lint:
+	uv run ruff check .
+
+# Formatting
+format:
+	uv run ruff format .
+
+# Type checking
+typecheck:
+	uv run ty check
+
+# Run all quality checks
+check-all: lint format typecheck test
 
 # Clean up local environments and virtual env
 clean:
