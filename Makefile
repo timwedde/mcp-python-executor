@@ -10,7 +10,7 @@ install:
 
 # Run tests
 test:
-	uv run python test_server.py
+	uv run pytest tests/
 
 # Linting
 lint:
