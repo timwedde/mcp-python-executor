@@ -1,9 +1,12 @@
+import base64
+import mimetypes
 import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Union
 from fastmcp import FastMCP
+from mcp.types import ImageContent, TextContent
 
 # Initialize FastMCP server
 mcp = FastMCP("PythonExecutor")
@@ -155,7 +158,7 @@ def _write_file(env_id: str, filename: str, content: str) -> str:
         raise RuntimeError(f"Error writing file: {str(e)}")
 
 
-def _read_file(env_id: str, filename: str) -> str:
+def _read_file(env_id: str, filename: str) -> Union[str, ImageContent]:
     env_path = get_env_path(env_id)
     if not env_path.exists():
         raise ValueError(f"Environment '{env_id}' does not exist.")
@@ -164,8 +167,47 @@ def _read_file(env_id: str, filename: str) -> str:
         file_path = get_safe_file_path(env_path, filename)
         if not file_path.exists():
             raise FileNotFoundError(f"File '{filename}' not found.")
-        return file_path.read_text()
+
+        # Check file size (limit to 10MB)
+        file_size = file_path.stat().st_size
+        if file_size > 10 * 1024 * 1024:
+            raise RuntimeError(
+                f"File '{filename}' is too large ({file_size} bytes). Max size is 10MB."
+            )
+
+        mime_type, _ = mimetypes.guess_type(file_path)
+        data = file_path.read_bytes()
+
+        # Detection logic
+        is_image = mime_type and mime_type.startswith("image/")
+
+        # Binary check: look for null byte in first 1024 bytes
+        is_binary = False
+        if not is_image:
+            chunk = data[:1024]
+            if b"\0" in chunk:
+                is_binary = True
+
+        if is_image:
+            b64_data = base64.b64encode(data).decode("utf-8")
+            return ImageContent(
+                type="image", data=b64_data, mimeType=mime_type or "image/png"
+            )
+
+        if is_binary:
+            b64_data = base64.b64encode(data).decode("utf-8")
+            return f"Binary file ({mime_type or 'application/octet-stream'}). Base64 content:\n{b64_data}"
+
+        # Assume text
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError:
+            # Fallback to latin-1
+            return data.decode("latin-1")
+
     except Exception as e:
+        if isinstance(e, (ValueError, FileNotFoundError, RuntimeError)):
+            raise e
         raise RuntimeError(f"Error reading file: {str(e)}")
 
 
@@ -290,8 +332,12 @@ def write_file(env_id: str, filename: str, content: str) -> str:
 
 
 @mcp.tool()
-def read_file(env_id: str, filename: str) -> str:
-    """Read a file from an environment."""
+def read_file(env_id: str, filename: str) -> Union[str, ImageContent]:
+    """
+    Read a file from an environment.
+    Returns text content for text files and ImageContent for images.
+    Binary files are returned as a Base64 string.
+    """
     return _read_file(env_id, filename)
 
 
