@@ -1,6 +1,5 @@
 import base64
 
-import pytest
 from mcp.types import ImageContent
 
 from server import (
@@ -117,6 +116,15 @@ def test_binary_detection(test_env):
     assert "content" in res
 
 
-def test_non_existent_env_failure():
-    with pytest.raises(ValueError, match="does not exist"):
-        _execute_python("non-existent", code="print(1)")
+def test_lazy_initialization():
+    env_id = "lazy-env"
+    # Ensure it's clean
+    if (ENVS_DIR / env_id).exists():
+        _delete_env(env_id)
+
+    res = _execute_python(env_id, code="print('lazy')")
+    assert "lazy" in res["stdout"]
+    assert (ENVS_DIR / env_id).exists()
+
+    # Cleanup
+    _delete_env(env_id)

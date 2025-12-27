@@ -10,7 +10,6 @@ from server import (
     _execute_python,
     _get_file_path,
     _install_packages,
-    _list_files,
     _list_packages,
     _read_file,
     _remove_packages,
@@ -46,16 +45,6 @@ def test_create_env_already_exists():
         shutil.rmtree(ENVS_DIR / env_id)
 
 
-def test_write_file_no_env():
-    with pytest.raises(ValueError, match="does not exist"):
-        _write_file("no-env", "test.txt", "data")
-
-
-def test_read_file_no_env():
-    with pytest.raises(ValueError, match="does not exist"):
-        _read_file("no-env", "test.txt")
-
-
 def test_read_file_not_found():
     env_id = "err-env"
     _create_env(env_id)
@@ -82,16 +71,6 @@ def test_read_file_too_large():
         shutil.rmtree(ENVS_DIR / env_id)
 
 
-def test_list_files_no_env():
-    with pytest.raises(ValueError, match="does not exist"):
-        _list_files("no-env")
-
-
-def test_get_file_path_no_env():
-    with pytest.raises(ValueError, match="does not exist"):
-        _get_file_path("no-env", "test.txt")
-
-
 def test_get_file_path_not_found():
     env_id = "path-err-env"
     _create_env(env_id)
@@ -100,21 +79,6 @@ def test_get_file_path_not_found():
             _get_file_path(env_id, "ghost.txt")
     finally:
         shutil.rmtree(ENVS_DIR / env_id)
-
-
-def test_install_packages_no_env():
-    with pytest.raises(ValueError, match="does not exist"):
-        _install_packages("no-env", ["requests"])
-
-
-def test_remove_packages_no_env():
-    with pytest.raises(ValueError, match="does not exist"):
-        _remove_packages("no-env", ["requests"])
-
-
-def test_list_packages_no_env():
-    with pytest.raises(ValueError, match="does not exist"):
-        _list_packages("no-env")
 
 
 def test_execute_python_no_file():
@@ -229,7 +193,7 @@ def test_read_file_unicode_error_fallback(test_env):
 
 def test_list_packages_parse_error(monkeypatch):
     import server
-    from server import _create_env, _list_packages
+    from server import _create_env
 
     env_id = "parse-fail-env"
     _create_env(env_id)
@@ -247,7 +211,7 @@ def test_list_packages_parse_error(monkeypatch):
 
 def test_list_packages_failure(monkeypatch):
     import server
-    from server import _create_env, _list_packages
+    from server import _create_env
 
     env_id = "list-fail-env"
     _create_env(env_id)
@@ -264,8 +228,6 @@ def test_list_packages_failure(monkeypatch):
 
 
 def test_write_file_exception(monkeypatch):
-    from server import _write_file
-
     _create_env("write-fail-env")
     try:
         monkeypatch.setattr("server.get_safe_file_path", lambda x, y: 1 / 0)

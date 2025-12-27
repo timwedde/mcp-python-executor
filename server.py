@@ -16,14 +16,11 @@ mcp = FastMCP(
     instructions="""
     You are an expert Python environment manager and code executor.
 
-    ENVIRONMENT PERSISTENCE (CRITICAL):
-    - ONLY call `create_env` ONCE per conversation or session.
-    - DO NOT create a new environment for every request.
-    - If you have already created an environment in this conversation, reuse it.
-    - After creation, use `install_packages`, `execute_python`, and `write_file`
-      to modify and use that existing environment.
-    - If you get a 'status: already_exists' result, continue using it
-      instead of trying to create it again.
+    ENVIRONMENT PERSISTENCE:
+    - You MUST use exactly ONE `env_id` for the entire conversation.
+    - DO NOT create new environment IDs for different requests.
+    - The server handles environment creation automatically on your first call.
+    - Reuse your chosen `env_id` in all subsequent tool calls (execute_python, write_file, etc).
 
     FILE RETRIEVAL & DISPLAY:
     - Whenever code execution or file operations create or identify a file
@@ -92,46 +89,17 @@ def run_uv_command(args: List[str], cwd: Optional[Path] = None) -> subprocess.Co
         )
 
 
-def _create_env(env_id: str, packages: Optional[List[str]] = None) -> Dict[str, Any]:
+def _ensure_env(env_id: str) -> Path:
+    """Ensure an environment exists, initializing it if necessary."""
     env_path = get_env_path(env_id)
-    if env_path.exists():
-        return {
-            "status": "already_exists",
-            "env_id": env_id,
-            "path": str(env_path),
-            "hint": (
-                f"Environment '{env_id}' is ready. Use other tools to modify it. "
-                "Do not call create_env again."
-            ),
-        }
-
-    env_path.mkdir(parents=True, exist_ok=True)
-    init_res = run_uv_command(["init", "--lib"], cwd=env_path)
-    if init_res.returncode != 0:
-        # Cleanup on failure
-        shutil.rmtree(env_path)
-        raise RuntimeError(f"Failed to initialize environment {env_id}:\n{init_res.stderr}")
-
-    if packages:
-        add_res = run_uv_command(["add"] + packages, cwd=env_path)
-        if add_res.returncode != 0:
-            return {
-                "status": "created_with_warning",
-                "env_id": env_id,
-                "warning": f"Failed to add packages: {add_res.stderr}",
-                "hint": (
-                    "Environment created. You can retry installing packages using install_packages."
-                ),
-            }
-
-    return {
-        "status": "created",
-        "env_id": env_id,
-        "hint": (
-            "Environment created. Use install_packages or execute_python "
-            "to proceed. Only call create_env once."
-        ),
-    }
+    if not env_path.exists():
+        env_path.mkdir(parents=True, exist_ok=True)
+        init_res = run_uv_command(["init", "--lib"], cwd=env_path)
+        if init_res.returncode != 0:
+            # Cleanup on failure
+            shutil.rmtree(env_path)
+            raise RuntimeError(f"Failed to initialize environment {env_id}:\n{init_res.stderr}")
+    return env_path
 
 
 def _execute_python(
@@ -140,11 +108,7 @@ def _execute_python(
     filename: str = "main.py",
     packages: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    env_path = get_env_path(env_id)
-    if not env_path.exists():
-        raise ValueError(
-            f"Environment '{env_id}' does not exist. Please create it first using create_env."
-        )
+    env_path = _ensure_env(env_id)
 
     if packages:
         add_res = run_uv_command(["add"] + packages, cwd=env_path)
@@ -181,9 +145,7 @@ def _execute_python(
 
 
 def _write_file(env_id: str, filename: str, content: str) -> Dict[str, Any]:
-    env_path = get_env_path(env_id)
-    if not env_path.exists():
-        raise ValueError(f"Environment '{env_id}' does not exist.")
+    env_path = _ensure_env(env_id)
 
     try:
         file_path = get_safe_file_path(env_path, filename)
@@ -199,13 +161,13 @@ def _write_file(env_id: str, filename: str, content: str) -> Dict[str, Any]:
             ),
         }
     except Exception as e:
+        if isinstance(e, RuntimeError):
+            raise e
         raise RuntimeError(f"Error writing file: {str(e)}")
 
 
 def _read_file(env_id: str, filename: str) -> Union[Dict[str, Any], ImageContent]:
-    env_path = get_env_path(env_id)
-    if not env_path.exists():
-        raise ValueError(f"Environment '{env_id}' does not exist.")
+    env_path = _ensure_env(env_id)
 
     try:
         file_path = get_safe_file_path(env_path, filename)
@@ -266,9 +228,7 @@ def _read_file(env_id: str, filename: str) -> Union[Dict[str, Any], ImageContent
 
 
 def _list_files(env_id: str) -> Dict[str, Any]:
-    env_path = get_env_path(env_id)
-    if not env_path.exists():
-        raise ValueError(f"Environment '{env_id}' does not exist.")
+    env_path = _ensure_env(env_id)
 
     files = []
     for p in env_path.rglob("*"):
@@ -283,9 +243,7 @@ def _list_files(env_id: str) -> Dict[str, Any]:
 
 
 def _get_file_path(env_id: str, filename: str) -> Dict[str, Any]:
-    env_path = get_env_path(env_id)
-    if not env_path.exists():
-        raise ValueError(f"Environment '{env_id}' does not exist.")
+    env_path = _ensure_env(env_id)
 
     try:
         file_path = get_safe_file_path(env_path, filename)
@@ -299,13 +257,13 @@ def _get_file_path(env_id: str, filename: str) -> Dict[str, Any]:
             ),
         }
     except Exception as e:
+        if isinstance(e, RuntimeError):
+            raise e
         raise RuntimeError(f"Error getting file path: {str(e)}")
 
 
 def _install_packages(env_id: str, packages: List[str]) -> Dict[str, Any]:
-    env_path = get_env_path(env_id)
-    if not env_path.exists():
-        raise ValueError(f"Environment '{env_id}' does not exist.")
+    env_path = _ensure_env(env_id)
 
     res = run_uv_command(["add"] + packages, cwd=env_path)
     if res.returncode == 0:
@@ -315,9 +273,7 @@ def _install_packages(env_id: str, packages: List[str]) -> Dict[str, Any]:
 
 
 def _remove_packages(env_id: str, packages: List[str]) -> Dict[str, Any]:
-    env_path = get_env_path(env_id)
-    if not env_path.exists():
-        raise ValueError(f"Environment '{env_id}' does not exist.")
+    env_path = _ensure_env(env_id)
 
     res = run_uv_command(["remove"] + packages, cwd=env_path)
     if res.returncode == 0:
@@ -327,9 +283,7 @@ def _remove_packages(env_id: str, packages: List[str]) -> Dict[str, Any]:
 
 
 def _list_packages(env_id: str) -> Dict[str, Any]:
-    env_path = get_env_path(env_id)
-    if not env_path.exists():
-        raise ValueError(f"Environment '{env_id}' does not exist.")
+    env_path = _ensure_env(env_id)
 
     res = run_uv_command(["pip", "list", "--format", "json"], cwd=env_path)
     if res.returncode == 0:
@@ -359,16 +313,44 @@ def _delete_env(env_id: str) -> Dict[str, Any]:
         raise ValueError(f"Environment '{env_id}' not found.")
 
 
+def _create_env(env_id: str, packages: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Manually create a new persistent Python environment."""
+    env_path = get_env_path(env_id)
+    if env_path.exists():
+        return {
+            "status": "already_exists",
+            "env_id": env_id,
+            "path": str(env_path),
+            "hint": (f"Environment '{env_id}' is ready. Use other tools to modify it. "),
+        }
+
+    env_path.mkdir(parents=True, exist_ok=True)
+    init_res = run_uv_command(["init", "--lib"], cwd=env_path)
+    if init_res.returncode != 0:
+        # Cleanup on failure
+        shutil.rmtree(env_path)
+        raise RuntimeError(f"Failed to initialize environment {env_id}:\n{init_res.stderr}")
+
+    if packages:
+        add_res = run_uv_command(["add"] + packages, cwd=env_path)
+        if add_res.returncode != 0:
+            return {
+                "status": "created_with_warning",
+                "env_id": env_id,
+                "warning": f"Failed to add packages: {add_res.stderr}",
+            }
+
+    return {"status": "created", "env_id": env_id}
+
+
+@mcp.resource("envs://list")
+def list_envs_resource() -> str:
+    """List all available persistent environments."""
+    envs = _list_envs()
+    return json.dumps(envs, indent=2)
+
+
 # Register tools
-@mcp.tool()
-def create_env(env_id: str, packages: Optional[List[str]] = None) -> Dict[str, Any]:
-    """
-    Create a new persistent Python environment.
-    Call this ONLY ONCE per task/thread. If it exists, reuse it.
-    """
-    return _create_env(env_id, packages)
-
-
 @mcp.tool()
 def execute_python(
     env_id: str,
