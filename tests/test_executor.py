@@ -9,25 +9,14 @@ from server import (
     _delete_env,
     _execute_python,
     _get_file_path,
+    _install_packages,
     _list_envs,
     _list_files,
     _list_packages,
     _read_file,
+    _remove_packages,
     _write_file,
 )
-
-
-@pytest.fixture
-def test_env():
-    env_id = "pytest-env"
-    # Ensure clean start
-    env_path = ENVS_DIR / env_id
-    if env_path.exists():
-        _delete_env(env_id)
-    _create_env(env_id)
-    yield env_id
-    if env_path.exists():
-        _delete_env(env_id)
 
 
 def test_create_and_delete_env():
@@ -91,6 +80,16 @@ def test_get_file_path(test_env):
     path = res["absolute_path"]
     assert str(ENVS_DIR) in path
     assert "path_test.txt" in path
+
+
+def test_install_and_remove_packages(test_env):
+    res = _install_packages(test_env, ["beartype"])
+    assert res["status"] == "success"
+    assert "beartype" in res["installed"]
+
+    res = _remove_packages(test_env, ["beartype"])
+    assert res["status"] == "success"
+    assert "beartype" in res["removed"]
 
 
 def test_image_detection(test_env):
