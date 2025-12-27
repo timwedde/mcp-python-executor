@@ -187,6 +187,20 @@ def _list_files(env_id: str) -> str:
     return f"Files in '{env_id}':\n" + "\n".join(f"- {f}" for f in sorted(files))
 
 
+def _get_file_path(env_id: str, filename: str) -> str:
+    env_path = get_env_path(env_id)
+    if not env_path.exists():
+        raise ValueError(f"Environment '{env_id}' does not exist.")
+
+    try:
+        file_path = get_safe_file_path(env_path, filename)
+        if not file_path.exists():
+            raise FileNotFoundError(f"File '{filename}' not found.")
+        return str(file_path.absolute())
+    except Exception as e:
+        raise RuntimeError(f"Error getting file path: {str(e)}")
+
+
 def _install_packages(env_id: str, packages: List[str]) -> str:
     env_path = get_env_path(env_id)
     if not env_path.exists():
@@ -285,6 +299,12 @@ def read_file(env_id: str, filename: str) -> str:
 def list_files(env_id: str) -> str:
     """List all files in an environment (excluding virtualenv)."""
     return _list_files(env_id)
+
+
+@mcp.tool()
+def get_file_path(env_id: str, filename: str) -> str:
+    """Get the absolute path to a requested file in an environment."""
+    return _get_file_path(env_id, filename)
 
 
 @mcp.tool()

@@ -7,6 +7,7 @@ from server import (
     _list_envs,
     _delete_env,
     _list_packages,
+    _get_file_path,
 )
 import os
 
@@ -28,6 +29,11 @@ def test_new_flow():
     print("\n3. Writing data.txt...")
     res = _write_file(env_id, "data.txt", "some sample data")
     print(res)
+
+    # 3.5 Get file path
+    print("\n3.5 Getting file path for data.txt...")
+    res = _get_file_path(env_id, "data.txt")
+    print(f"Absolute path: {res}")
 
     # 4. Write and execute code that reads that file
     print("\n4. Executing code to read data.txt...")
