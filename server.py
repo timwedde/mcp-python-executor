@@ -4,7 +4,8 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional, List, Union
+from typing import List, Optional, Union
+
 from fastmcp import FastMCP
 from mcp.types import ImageContent, TextContent
 
@@ -211,7 +212,7 @@ def _read_file(env_id: str, filename: str) -> Union[str, ImageContent]:
         raise RuntimeError(f"Error reading file: {str(e)}")
 
 
-def _list_files(env_id: str) -> str:
+def _list_files(env_id: str) -> List[str]:
     env_path = get_env_path(env_id)
     if not env_path.exists():
         raise ValueError(f"Environment '{env_id}' does not exist.")
@@ -224,9 +225,11 @@ def _list_files(env_id: str) -> str:
             files.append(str(p.relative_to(env_path)))
 
     if not files:
-        return f"No files found in environment '{env_id}'."
+        return []
 
-    return f"Files in '{env_id}':\n" + "\n".join(f"- {f}" for f in sorted(files))
+    # Sort by number of path components, then by path string
+    files.sort(key=lambda p: (len(Path(p).parts), p))
+    return files
 
 
 def _get_file_path(env_id: str, filename: str) -> str:
@@ -342,8 +345,11 @@ def read_file(env_id: str, filename: str) -> Union[str, ImageContent]:
 
 
 @mcp.tool()
-def list_files(env_id: str) -> str:
-    """List all files in an environment (excluding virtualenv)."""
+def list_files(env_id: str) -> List[str]:
+    """
+    List all files in an environment (excluding virtualenv).
+    Returns a JSON array of relative paths sorted by depth and name.
+    """
     return _list_files(env_id)
 
 

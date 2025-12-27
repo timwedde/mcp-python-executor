@@ -49,7 +49,9 @@ print(f"Requests version: {requests.__version__}")
 
     # 5. List files
     print("\n5. Listing files...")
-    print(_list_files(env_id))
+    files = _list_files(env_id)
+    print(f"Type: {type(files)}")
+    print(files)
 
     # 6. Read file back
     print("\n6. Reading read_test.py content...")
