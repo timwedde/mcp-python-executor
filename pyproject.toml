@@ -3,7 +3,7 @@ name = "mcp-python-executor"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
     "fastmcp>=2.14.1",
     "mcp[cli]>=1.25.0",
@@ -17,7 +17,7 @@ dev = [
 ]
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py314"
 line-length = 100
 
 [tool.ruff.lint]
