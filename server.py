@@ -1,10 +1,11 @@
 import base64
+import json
 import mimetypes
 import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from fastmcp import FastMCP
 from mcp.types import ImageContent
@@ -69,10 +70,10 @@ def run_uv_command(args: List[str], cwd: Optional[Path] = None) -> subprocess.Co
         )
 
 
-def _create_env(env_id: str, packages: Optional[List[str]] = None) -> str:
+def _create_env(env_id: str, packages: Optional[List[str]] = None) -> Dict[str, Any]:
     env_path = get_env_path(env_id)
     if env_path.exists():
-        return f"Environment '{env_id}' already exists at {env_path}."
+        return {"status": "already_exists", "env_id": env_id, "path": str(env_path)}
 
     env_path.mkdir(parents=True, exist_ok=True)
     init_res = run_uv_command(["init", "--lib"], cwd=env_path)
@@ -84,9 +85,13 @@ def _create_env(env_id: str, packages: Optional[List[str]] = None) -> str:
     if packages:
         add_res = run_uv_command(["add"] + packages, cwd=env_path)
         if add_res.returncode != 0:
-            return f"Environment created, but failed to add packages:\n{add_res.stderr}"
+            return {
+                "status": "created_with_warning",
+                "env_id": env_id,
+                "warning": f"Failed to add packages: {add_res.stderr}",
+            }
 
-    return f"Environment '{env_id}' created successfully."
+    return {"status": "created", "env_id": env_id}
 
 
 def _execute_python(
@@ -94,7 +99,7 @@ def _execute_python(
     code: Optional[str] = None,
     filename: str = "main.py",
     packages: Optional[List[str]] = None,
-) -> str:
+) -> Dict[str, Any]:
     env_path = get_env_path(env_id)
     if not env_path.exists():
         raise ValueError(
@@ -117,25 +122,21 @@ def _execute_python(
 
     run_res = run_uv_command(["run", str(file_path)], cwd=env_path)
 
-    combined_output = []
-    if run_res.stdout:
-        combined_output.append(run_res.stdout)
-    if run_res.stderr:
-        combined_output.append(run_res.stderr)
-
-    output_text = (
-        "\n".join(combined_output)
-        if combined_output
-        else "Code executed successfully with no output."
-    )
+    output_data = {
+        "stdout": run_res.stdout,
+        "stderr": run_res.stderr,
+        "exit_code": run_res.returncode,
+    }
 
     if run_res.returncode != 0:
-        raise RuntimeError(f"Execution failed with exit code {run_res.returncode}:\n{output_text}")
+        raise RuntimeError(
+            f"Execution failed with exit code {run_res.returncode}:\n{run_res.stderr}"
+        )
 
-    return output_text
+    return output_data
 
 
-def _write_file(env_id: str, filename: str, content: str) -> str:
+def _write_file(env_id: str, filename: str, content: str) -> Dict[str, Any]:
     env_path = get_env_path(env_id)
     if not env_path.exists():
         raise ValueError(f"Environment '{env_id}' does not exist.")
@@ -144,12 +145,12 @@ def _write_file(env_id: str, filename: str, content: str) -> str:
         file_path = get_safe_file_path(env_path, filename)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content)
-        return f"Successfully wrote to '{filename}' in environment '{env_id}'."
+        return {"status": "success", "filename": filename, "bytes_written": len(content)}
     except Exception as e:
         raise RuntimeError(f"Error writing file: {str(e)}")
 
 
-def _read_file(env_id: str, filename: str) -> Union[str, ImageContent]:
+def _read_file(env_id: str, filename: str) -> Union[Dict[str, Any], ImageContent]:
     env_path = get_env_path(env_id)
     if not env_path.exists():
         raise ValueError(f"Environment '{env_id}' does not exist.")
@@ -186,14 +187,25 @@ def _read_file(env_id: str, filename: str) -> Union[str, ImageContent]:
         if is_binary:
             b64_data = base64.b64encode(data).decode("utf-8")
             m_type = mime_type or "application/octet-stream"
-            return f"Binary file ({m_type}). Base64 content:\n{b64_data}"
+            return {
+                "filename": filename,
+                "type": "binary",
+                "mime_type": m_type,
+                "content": b64_data,
+            }
 
         # Assume text
         try:
-            return data.decode("utf-8")
+            content = data.decode("utf-8")
         except UnicodeDecodeError:
-            # Fallback to latin-1
-            return data.decode("latin-1")
+            content = data.decode("latin-1")
+
+        return {
+            "filename": filename,
+            "type": "text",
+            "mime_type": mime_type or "text/plain",
+            "content": content,
+        }
 
     except Exception as e:
         if isinstance(e, (ValueError, FileNotFoundError, RuntimeError)):
@@ -201,7 +213,7 @@ def _read_file(env_id: str, filename: str) -> Union[str, ImageContent]:
         raise RuntimeError(f"Error reading file: {str(e)}")
 
 
-def _list_files(env_id: str) -> List[str]:
+def _list_files(env_id: str) -> Dict[str, Any]:
     env_path = get_env_path(env_id)
     if not env_path.exists():
         raise ValueError(f"Environment '{env_id}' does not exist.")
@@ -213,15 +225,12 @@ def _list_files(env_id: str) -> List[str]:
         if p.is_file():
             files.append(str(p.relative_to(env_path)))
 
-    if not files:
-        return []
-
     # Sort by number of path components, then by path string
     files.sort(key=lambda p: (len(Path(p).parts), p))
-    return files
+    return {"env_id": env_id, "files": files}
 
 
-def _get_file_path(env_id: str, filename: str) -> str:
+def _get_file_path(env_id: str, filename: str) -> Dict[str, Any]:
     env_path = get_env_path(env_id)
     if not env_path.exists():
         raise ValueError(f"Environment '{env_id}' does not exist.")
@@ -230,70 +239,71 @@ def _get_file_path(env_id: str, filename: str) -> str:
         file_path = get_safe_file_path(env_path, filename)
         if not file_path.exists():
             raise FileNotFoundError(f"File '{filename}' not found.")
-        return str(file_path.absolute())
+        return {"filename": filename, "absolute_path": str(file_path.absolute())}
     except Exception as e:
         raise RuntimeError(f"Error getting file path: {str(e)}")
 
 
-def _install_packages(env_id: str, packages: List[str]) -> str:
+def _install_packages(env_id: str, packages: List[str]) -> Dict[str, Any]:
     env_path = get_env_path(env_id)
     if not env_path.exists():
         raise ValueError(f"Environment '{env_id}' does not exist.")
 
     res = run_uv_command(["add"] + packages, cwd=env_path)
     if res.returncode == 0:
-        return f"Successfully installed {', '.join(packages)} in environment '{env_id}'."
+        return {"status": "success", "env_id": env_id, "installed": packages}
     else:
         raise RuntimeError(f"Error installing packages:\n{res.stderr}")
 
 
-def _remove_packages(env_id: str, packages: List[str]) -> str:
+def _remove_packages(env_id: str, packages: List[str]) -> Dict[str, Any]:
     env_path = get_env_path(env_id)
     if not env_path.exists():
         raise ValueError(f"Environment '{env_id}' does not exist.")
 
     res = run_uv_command(["remove"] + packages, cwd=env_path)
     if res.returncode == 0:
-        return f"Successfully removed {', '.join(packages)} from environment '{env_id}'."
+        return {"status": "success", "env_id": env_id, "removed": packages}
     else:
         raise RuntimeError(f"Error removing packages:\n{res.stderr}")
 
 
-def _list_packages(env_id: str) -> str:
+def _list_packages(env_id: str) -> Dict[str, Any]:
     env_path = get_env_path(env_id)
     if not env_path.exists():
-        return f"Environment '{env_id}' does not exist."
+        raise ValueError(f"Environment '{env_id}' does not exist.")
 
-    res = run_uv_command(["pip", "list"], cwd=env_path)
+    res = run_uv_command(["pip", "list", "--format", "json"], cwd=env_path)
     if res.returncode == 0:
-        return f"Packages in '{env_id}':\n{res.stdout}"
+        try:
+            packages = json.loads(res.stdout)
+            return {"env_id": env_id, "packages": packages}
+        except json.JSONDecodeError:
+            raise RuntimeError("Failed to parse package list from uv.")
     else:
-        return f"Error listing packages:\n{res.stderr}"
+        raise RuntimeError(f"Error listing packages:\n{res.stderr}")
 
 
-def _list_envs() -> str:
+def _list_envs() -> Dict[str, Any]:
     if not ENVS_DIR.exists():
-        return "No environments found."
+        return {"environments": []}
 
     envs = [d.name for d in ENVS_DIR.iterdir() if d.is_dir()]
-    if not envs:
-        return "No environments found."
-
-    return "Persistent environments:\n" + "\n".join(f"- {e}" for e in envs)
+    return {"environments": sorted(envs)}
 
 
-def _delete_env(env_id: str) -> str:
+def _delete_env(env_id: str) -> Dict[str, Any]:
     env_path = get_env_path(env_id)
     if env_path.exists() and env_path.is_dir():
         shutil.rmtree(env_path)
-        return f"Environment '{env_id}' has been deleted."
+        return {"status": "deleted", "env_id": env_id}
     else:
-        return f"Environment '{env_id}' not found."
+        raise ValueError(f"Environment '{env_id}' not found.")
 
 
 # Register tools
 @mcp.tool()
-def create_env(env_id: str, packages: Optional[List[str]] = None) -> str:
+def create_env(env_id: str, packages: Optional[List[str]] = None) -> Dict[str, Any]:
     """Create a new persistent Python environment."""
     return _create_env(env_id, packages)
 
@@ -304,7 +314,7 @@ def execute_python(
     code: Optional[str] = None,
     filename: str = "main.py",
     packages: Optional[List[str]] = None,
-) -> str:
+) -> Dict[str, Any]:
     """
     Execute Python code in a persistent environment.
     If code is provided, it will be written to filename (default main.py) before execution.
@@ -314,62 +324,61 @@ def execute_python(
 
 
 @mcp.tool()
-def write_file(env_id: str, filename: str, content: str) -> str:
+def write_file(env_id: str, filename: str, content: str) -> Dict[str, Any]:
     """Write a file to an environment."""
     return _write_file(env_id, filename, content)
 
 
 @mcp.tool()
-def read_file(env_id: str, filename: str) -> Union[str, ImageContent]:
+def read_file(env_id: str, filename: str) -> Union[Dict[str, Any], ImageContent]:
     """
     Read a file from an environment.
-    Returns text content for text files and ImageContent for images.
-    Binary files are returned as a Base64 string.
+    Returns structured data for text/binary files and ImageContent for images.
     """
     return _read_file(env_id, filename)
 
 
 @mcp.tool()
-def list_files(env_id: str) -> List[str]:
+def list_files(env_id: str) -> Dict[str, Any]:
     """
     List all files in an environment (excluding virtualenv).
-    Returns a JSON array of relative paths sorted by depth and name.
+    Returns a JSON object containing a list of relative paths.
     """
     return _list_files(env_id)
 
 
 @mcp.tool()
-def get_file_path(env_id: str, filename: str) -> str:
+def get_file_path(env_id: str, filename: str) -> Dict[str, Any]:
     """Get the absolute path to a requested file in an environment."""
     return _get_file_path(env_id, filename)
 
 
 @mcp.tool()
-def install_packages(env_id: str, packages: List[str]) -> str:
+def install_packages(env_id: str, packages: List[str]) -> Dict[str, Any]:
     """Install packages into a persistent environment."""
     return _install_packages(env_id, packages)
 
 
 @mcp.tool()
-def remove_packages(env_id: str, packages: List[str]) -> str:
+def remove_packages(env_id: str, packages: List[str]) -> Dict[str, Any]:
     """Remove packages from a persistent environment."""
     return _remove_packages(env_id, packages)
 
 
 @mcp.tool()
-def list_packages(env_id: str) -> str:
+def list_packages(env_id: str) -> Dict[str, Any]:
     """List all installed packages in a persistent environment."""
     return _list_packages(env_id)
 
 
 @mcp.tool()
-def list_envs() -> str:
+def list_envs() -> Dict[str, Any]:
     """List all persistent environments."""
     return _list_envs()
 
 
 @mcp.tool()
-def delete_env(env_id: str) -> str:
+def delete_env(env_id: str) -> Dict[str, Any]:
     """Delete a persistent environment."""
     return _delete_env(env_id)
 

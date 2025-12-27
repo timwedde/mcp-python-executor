@@ -11,6 +11,7 @@ from server import (
     _get_file_path,
     _list_envs,
     _list_files,
+    _list_packages,
     _read_file,
     _write_file,
 )
@@ -20,39 +21,51 @@ from server import (
 def test_env():
     env_id = "pytest-env"
     # Ensure clean start
-    _delete_env(env_id)
+    env_path = ENVS_DIR / env_id
+    if env_path.exists():
+        _delete_env(env_id)
     _create_env(env_id)
     yield env_id
-    _delete_env(env_id)
+    if env_path.exists():
+        _delete_env(env_id)
 
 
 def test_create_and_delete_env():
     env_id = "temp-test-env"
     res = _create_env(env_id)
-    assert "created successfully" in res
-    assert env_id in _list_envs()
+    assert res["status"] == "created"
+    assert env_id in _list_envs()["environments"]
 
     res = _delete_env(env_id)
-    assert "has been deleted" in res
-    assert env_id not in _list_envs()
+    assert res["status"] == "deleted"
+    assert env_id not in _list_envs()["environments"]
 
 
 def test_write_and_read_file(test_env):
     filename = "test.txt"
     content = "hello pytest"
     res = _write_file(test_env, filename, content)
-    assert "Successfully wrote" in res
+    assert res["status"] == "success"
 
-    read_content = _read_file(test_env, filename)
-    assert read_content == content
+    read_res = _read_file(test_env, filename)
+    assert isinstance(read_res, dict)
+    assert read_res["content"] == content
+
+
+def test_list_packages(test_env):
+    # Should have no external packages initially (besides stdlib and boilerplate)
+    res = _list_packages(test_env)
+    assert isinstance(res, dict)
+    assert "packages" in res
+    assert isinstance(res["packages"], list)
 
 
 def test_list_files(test_env):
     _write_file(test_env, "a.txt", "a")
     _write_file(test_env, "sub/b.txt", "b")
 
-    files = _list_files(test_env)
-    assert isinstance(files, list)
+    res = _list_files(test_env)
+    files = res["files"]
     assert "a.txt" in files
     assert "sub/b.txt" in files
     # Check sorting (root first)
@@ -62,19 +75,20 @@ def test_list_files(test_env):
 def test_execute_python(test_env):
     code = "print('hello from python')"
     res = _execute_python(test_env, code=code)
-    assert "hello from python" in res
+    assert "hello from python" in res["stdout"]
 
 
 def test_execute_with_packages(test_env):
     # This might be slow as it installs a package
     code = "import requests; print(requests.__version__)"
     res = _execute_python(test_env, code=code, packages=["requests"])
-    assert "2." in res  # Assuming a 2.x version of requests
+    assert "2." in res["stdout"]  # Assuming a 2.x version of requests
 
 
 def test_get_file_path(test_env):
     _write_file(test_env, "path_test.txt", "data")
-    path = _get_file_path(test_env, "path_test.txt")
+    res = _get_file_path(test_env, "path_test.txt")
+    path = res["absolute_path"]
     assert str(ENVS_DIR) in path
     assert "path_test.txt" in path
 
@@ -99,9 +113,9 @@ def test_binary_detection(test_env):
         f.write(b"\x00\x01\x02\x03")
 
     res = _read_file(test_env, "test.bin")
-    assert isinstance(res, str)
-    assert "Binary file" in res
-    assert "Base64 content" in res
+    assert isinstance(res, dict)
+    assert res["type"] == "binary"
+    assert "content" in res
 
 
 def test_non_existent_env_failure():
