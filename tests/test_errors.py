@@ -1,8 +1,11 @@
-import pytest
 import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
+
 from server import (
+    ENVS_DIR,
     _create_env,
     _execute_python,
     _get_file_path,
@@ -14,7 +17,6 @@ from server import (
     _write_file,
     get_env_path,
     get_safe_file_path,
-    ENVS_DIR,
     run_uv_command,
 )
 
@@ -167,12 +169,11 @@ def test_remove_packages_failure():
 
 def test_run_uv_command_timeout(monkeypatch):
     import subprocess
+
     from server import run_uv_command
 
     def mock_run(*args, **kwargs):
         raise subprocess.TimeoutExpired(args[0], 300)
-
-    import server
 
     monkeypatch.setattr(subprocess, "run", mock_run)
     res = run_uv_command(["version"])
@@ -222,12 +223,13 @@ def test_read_file_unicode_error_fallback(test_env):
         f.write(b"\xe9")  # 'é' in latin-1
 
     res = _read_file(test_env, "latin1.txt")
+    assert isinstance(res, dict)
     assert res["content"] == "\xe9"
 
 
 def test_list_packages_parse_error(monkeypatch):
     import server
-    from server import _list_packages, _create_env
+    from server import _create_env, _list_packages
 
     env_id = "parse-fail-env"
     _create_env(env_id)
@@ -245,7 +247,7 @@ def test_list_packages_parse_error(monkeypatch):
 
 def test_list_packages_failure(monkeypatch):
     import server
-    from server import _list_packages, _create_env
+    from server import _create_env, _list_packages
 
     env_id = "list-fail-env"
     _create_env(env_id)
@@ -262,7 +264,6 @@ def test_list_packages_failure(monkeypatch):
 
 
 def test_write_file_exception(monkeypatch):
-    import server
     from server import _write_file
 
     _create_env("write-fail-env")
@@ -275,7 +276,6 @@ def test_write_file_exception(monkeypatch):
 
 
 def test_read_file_exception(monkeypatch):
-    import server
     from server import _read_file
 
     _create_env("read-fail-env")
@@ -290,8 +290,6 @@ def test_read_file_exception(monkeypatch):
 def test_run_uv_command_exception(monkeypatch):
     def mock_run(*args, **kwargs):
         raise Exception("Mock error")
-
-    import server
 
     monkeypatch.setattr(subprocess, "run", mock_run)
     res = run_uv_command(["version"])

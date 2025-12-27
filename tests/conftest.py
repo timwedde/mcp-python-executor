@@ -1,6 +1,6 @@
 import pytest
-import shutil
-from server import ENVS_DIR, _delete_env, _create_env
+
+from server import ENVS_DIR, _create_env, _delete_env
 
 
 @pytest.fixture

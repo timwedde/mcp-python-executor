@@ -12,6 +12,18 @@ install:
 test:
 	uv run pytest
 
+# Linting
+lint:
+	uv run ruff check .
+
+# Formatting
+format:
+	uv run ruff format .
+
+# Type checking
+typecheck:
+	uv run ty check
+
 # Open coverage report in browser
 coverage: test
 	open htmlcov/index.html
