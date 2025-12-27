@@ -18,7 +18,8 @@ mcp = FastMCP(
 
     ENVIRONMENT PERSISTENCE:
     - You MUST use exactly ONE `env_id` for the entire conversation.
-    - DO NOT create new environment IDs for different requests.
+    - DO NOT create multiple environment IDs.
+    - DO NOT create a new environment for each request.
     - The server handles environment creation automatically on your first call.
     - Reuse your chosen `env_id` in all subsequent tool calls (execute_python, write_file, etc).
 
@@ -242,26 +243,6 @@ def _list_files(env_id: str) -> Dict[str, Any]:
     return {"env_id": env_id, "files": files}
 
 
-def _get_file_path(env_id: str, filename: str) -> Dict[str, Any]:
-    env_path = _ensure_env(env_id)
-
-    try:
-        file_path = get_safe_file_path(env_path, filename)
-        if not file_path.exists():
-            raise FileNotFoundError(f"File '{filename}' not found.")
-        return {
-            "filename": filename,
-            "absolute_path": str(file_path.absolute()),
-            "hint": (
-                "This is an internal path. To display the file to the user, you MUST use read_file."
-            ),
-        }
-    except Exception as e:
-        if isinstance(e, RuntimeError):
-            raise e
-        raise RuntimeError(f"Error getting file path: {str(e)}")
-
-
 def _install_packages(env_id: str, packages: List[str]) -> Dict[str, Any]:
     env_path = _ensure_env(env_id)
 
@@ -313,36 +294,6 @@ def _delete_env(env_id: str) -> Dict[str, Any]:
         raise ValueError(f"Environment '{env_id}' not found.")
 
 
-def _create_env(env_id: str, packages: Optional[List[str]] = None) -> Dict[str, Any]:
-    """Manually create a new persistent Python environment."""
-    env_path = get_env_path(env_id)
-    if env_path.exists():
-        return {
-            "status": "already_exists",
-            "env_id": env_id,
-            "path": str(env_path),
-            "hint": (f"Environment '{env_id}' is ready. Use other tools to modify it. "),
-        }
-
-    env_path.mkdir(parents=True, exist_ok=True)
-    init_res = run_uv_command(["init", "--lib"], cwd=env_path)
-    if init_res.returncode != 0:
-        # Cleanup on failure
-        shutil.rmtree(env_path)
-        raise RuntimeError(f"Failed to initialize environment {env_id}:\n{init_res.stderr}")
-
-    if packages:
-        add_res = run_uv_command(["add"] + packages, cwd=env_path)
-        if add_res.returncode != 0:
-            return {
-                "status": "created_with_warning",
-                "env_id": env_id,
-                "warning": f"Failed to add packages: {add_res.stderr}",
-            }
-
-    return {"status": "created", "env_id": env_id}
-
-
 @mcp.resource("envs://list")
 def list_envs_resource() -> str:
     """List all available persistent environments."""
@@ -392,15 +343,6 @@ def list_files(env_id: str) -> Dict[str, Any]:
     Use this to discover files that might need to be read via read_file.
     """
     return _list_files(env_id)
-
-
-@mcp.tool()
-def get_file_path(env_id: str, filename: str) -> Dict[str, Any]:
-    """
-    Get the absolute path to a requested file in an environment.
-    This is for internal tool use. To show the file to the user, use read_file.
-    """
-    return _get_file_path(env_id, filename)
 
 
 @mcp.tool()

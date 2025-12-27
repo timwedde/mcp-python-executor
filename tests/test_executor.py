@@ -4,29 +4,15 @@ from mcp.types import ImageContent
 
 from server import (
     ENVS_DIR,
-    _create_env,
     _delete_env,
     _execute_python,
-    _get_file_path,
     _install_packages,
-    _list_envs,
     _list_files,
     _list_packages,
     _read_file,
     _remove_packages,
     _write_file,
 )
-
-
-def test_create_and_delete_env():
-    env_id = "temp-test-env"
-    res = _create_env(env_id)
-    assert res["status"] == "created"
-    assert env_id in _list_envs()["environments"]
-
-    res = _delete_env(env_id)
-    assert res["status"] == "deleted"
-    assert env_id not in _list_envs()["environments"]
 
 
 def test_write_and_read_file(test_env):
@@ -71,14 +57,6 @@ def test_execute_with_packages(test_env):
     code = "import requests; print(requests.__version__)"
     res = _execute_python(test_env, code=code, packages=["requests"])
     assert "2." in res["stdout"]  # Assuming a 2.x version of requests
-
-
-def test_get_file_path(test_env):
-    _write_file(test_env, "path_test.txt", "data")
-    res = _get_file_path(test_env, "path_test.txt")
-    path = res["absolute_path"]
-    assert str(ENVS_DIR) in path
-    assert "path_test.txt" in path
 
 
 def test_install_and_remove_packages(test_env):

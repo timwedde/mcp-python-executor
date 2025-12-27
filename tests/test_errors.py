@@ -6,10 +6,10 @@ import pytest
 
 from server import (
     ENVS_DIR,
-    _create_env,
+    _ensure_env,
     _execute_python,
-    _get_file_path,
     _install_packages,
+    _list_envs,
     _list_packages,
     _read_file,
     _remove_packages,
@@ -35,19 +35,20 @@ def test_get_safe_file_path_traversal():
         get_safe_file_path(env_path, "/etc/passwd")
 
 
-def test_create_env_already_exists():
-    env_id = "already-exists"
-    _create_env(env_id)
+def test_ensure_env_works():
+    env_id = "ensure-env-test"
     try:
-        res = _create_env(env_id)
-        assert res["status"] == "already_exists"
+        env_path = _ensure_env(env_id)
+        assert env_path.exists()
+        assert (env_path / "pyproject.toml").exists()
     finally:
-        shutil.rmtree(ENVS_DIR / env_id)
+        if (ENVS_DIR / env_id).exists():
+            shutil.rmtree(ENVS_DIR / env_id)
 
 
 def test_read_file_not_found():
     env_id = "err-env"
-    _create_env(env_id)
+    _ensure_env(env_id)
     try:
         with pytest.raises(FileNotFoundError, match="not found"):
             _read_file(env_id, "ghost.txt")
@@ -57,7 +58,7 @@ def test_read_file_not_found():
 
 def test_read_file_too_large():
     env_id = "large-env"
-    _create_env(env_id)
+    _ensure_env(env_id)
     try:
         env_path = ENVS_DIR / env_id
         file_path = env_path / "large.bin"
@@ -71,19 +72,9 @@ def test_read_file_too_large():
         shutil.rmtree(ENVS_DIR / env_id)
 
 
-def test_get_file_path_not_found():
-    env_id = "path-err-env"
-    _create_env(env_id)
-    try:
-        with pytest.raises(RuntimeError, match="not found"):
-            _get_file_path(env_id, "ghost.txt")
-    finally:
-        shutil.rmtree(ENVS_DIR / env_id)
-
-
 def test_execute_python_no_file():
     env_id = "exec-err-env"
-    _create_env(env_id)
+    _ensure_env(env_id)
     try:
         with pytest.raises(FileNotFoundError, match="not found"):
             _execute_python(env_id, filename="non-existent.py")
@@ -93,7 +84,7 @@ def test_execute_python_no_file():
 
 def test_execute_python_failure():
     env_id = "fail-exec-env"
-    _create_env(env_id)
+    _ensure_env(env_id)
     try:
         with pytest.raises(RuntimeError, match="Execution failed"):
             _execute_python(env_id, code="import sys; sys.exit(1)")
@@ -103,7 +94,7 @@ def test_execute_python_failure():
 
 def test_execute_python_add_package_failure():
     env_id = "pkg-fail-env"
-    _create_env(env_id)
+    _ensure_env(env_id)
     try:
         with pytest.raises(RuntimeError, match="Failed to add packages"):
             _execute_python(env_id, code="print(1)", packages=["non-existent-package-name-12345"])
@@ -113,7 +104,7 @@ def test_execute_python_add_package_failure():
 
 def test_install_packages_failure():
     env_id = "inst-fail-env"
-    _create_env(env_id)
+    _ensure_env(env_id)
     try:
         with pytest.raises(RuntimeError, match="Error installing packages"):
             _install_packages(env_id, ["non-existent-package-name-12345"])
@@ -123,7 +114,7 @@ def test_install_packages_failure():
 
 def test_remove_packages_failure():
     env_id = "rem-fail-env"
-    _create_env(env_id)
+    _ensure_env(env_id)
     try:
         with pytest.raises(RuntimeError, match="Error removing packages"):
             _remove_packages(env_id, ["non-existent-package-name-12345"])
@@ -145,9 +136,9 @@ def test_run_uv_command_timeout(monkeypatch):
     assert "Error: Command timed out" in res.stderr
 
 
-def test_create_env_init_failure_mocked(monkeypatch):
+def test_ensure_env_init_failure_mocked(monkeypatch):
     import server
-    from server import _create_env
+    from server import _ensure_env
 
     def mock_uv_command(args, cwd=None):
         if args[0] == "init":
@@ -157,24 +148,7 @@ def test_create_env_init_failure_mocked(monkeypatch):
     monkeypatch.setattr(server, "run_uv_command", mock_uv_command)
 
     with pytest.raises(RuntimeError, match="Failed to initialize"):
-        _create_env("mock-fail-env")
-
-
-def test_create_env_add_failure(monkeypatch):
-    import server
-    from server import _create_env
-
-    def mock_uv_command(args, cwd=None):
-        if args[0] == "add":
-            return subprocess.CompletedProcess(args, 1, "", "Mock add failure")
-        return subprocess.CompletedProcess(args, 0, "mock stdout", "")
-
-    monkeypatch.setattr(server, "run_uv_command", mock_uv_command)
-
-    res = _create_env("mock-add-fail-env", packages=["reqs"])
-    assert res["status"] == "created_with_warning"
-    assert "Mock add failure" in res["warning"]
-    shutil.rmtree(ENVS_DIR / "mock-add-fail-env")
+        _ensure_env("mock-fail-env")
 
 
 def test_read_file_unicode_error_fallback(test_env):
@@ -193,10 +167,10 @@ def test_read_file_unicode_error_fallback(test_env):
 
 def test_list_packages_parse_error(monkeypatch):
     import server
-    from server import _create_env
+    from server import _ensure_env
 
     env_id = "parse-fail-env"
-    _create_env(env_id)
+    _ensure_env(env_id)
     try:
 
         def mock_uv_command(args, cwd=None):
@@ -211,10 +185,10 @@ def test_list_packages_parse_error(monkeypatch):
 
 def test_list_packages_failure(monkeypatch):
     import server
-    from server import _create_env
+    from server import _ensure_env
 
     env_id = "list-fail-env"
-    _create_env(env_id)
+    _ensure_env(env_id)
     try:
 
         def mock_uv_command(args, cwd=None):
@@ -228,7 +202,7 @@ def test_list_packages_failure(monkeypatch):
 
 
 def test_write_file_exception(monkeypatch):
-    _create_env("write-fail-env")
+    _ensure_env("write-fail-env")
     try:
         monkeypatch.setattr("server.get_safe_file_path", lambda x, y: 1 / 0)
         with pytest.raises(RuntimeError, match="Error writing file"):
@@ -240,7 +214,7 @@ def test_write_file_exception(monkeypatch):
 def test_read_file_exception(monkeypatch):
     from server import _read_file
 
-    _create_env("read-fail-env")
+    _ensure_env("read-fail-env")
     try:
         monkeypatch.setattr("server.get_safe_file_path", lambda x, y: 1 / 0)
         with pytest.raises(RuntimeError, match="Error reading file"):
@@ -261,7 +235,6 @@ def test_run_uv_command_exception(monkeypatch):
 
 def test_list_envs_empty(monkeypatch):
     monkeypatch.setattr("server.ENVS_DIR", Path("/tmp/non-existent-mcp-envs"))
-    from server import _list_envs
 
     res = _list_envs()
     assert res["environments"] == []
