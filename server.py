@@ -11,7 +11,29 @@ from fastmcp import FastMCP
 from mcp.types import ImageContent
 
 # Initialize FastMCP server
-mcp = FastMCP("PythonExecutor")
+mcp = FastMCP(
+    "PythonExecutor",
+    instructions="""
+    You are an expert Python environment manager and code executor.
+
+    ENVIRONMENT PERSISTENCE (CRITICAL):
+    - ONLY call `create_env` ONCE per conversation or session.
+    - DO NOT create a new environment for every request.
+    - If you have already created an environment in this conversation, reuse it.
+    - After creation, use `install_packages`, `execute_python`, and `write_file`
+      to modify and use that existing environment.
+    - If you get a 'status: already_exists' result, continue using it
+      instead of trying to create it again.
+
+    FILE RETRIEVAL & DISPLAY:
+    - Whenever code execution or file operations create or identify a file
+      (especially images like .png, .jpg), you MUST call `read_file` to retrieve
+      and show it to the user.
+    - NEVER just print the absolute path to the user; they cannot see local files on your host.
+    - If a tool result contains a file path, immediately follow up with `read_file`
+      for that specific file.
+    """,
+)
 
 # Define base directory for environments
 BASE_DIR = Path.home() / ".mcp-python-executor"
@@ -73,7 +95,15 @@ def run_uv_command(args: List[str], cwd: Optional[Path] = None) -> subprocess.Co
 def _create_env(env_id: str, packages: Optional[List[str]] = None) -> Dict[str, Any]:
     env_path = get_env_path(env_id)
     if env_path.exists():
-        return {"status": "already_exists", "env_id": env_id, "path": str(env_path)}
+        return {
+            "status": "already_exists",
+            "env_id": env_id,
+            "path": str(env_path),
+            "hint": (
+                f"Environment '{env_id}' is ready. Use other tools to modify it. "
+                "Do not call create_env again."
+            ),
+        }
 
     env_path.mkdir(parents=True, exist_ok=True)
     init_res = run_uv_command(["init", "--lib"], cwd=env_path)
@@ -89,9 +119,19 @@ def _create_env(env_id: str, packages: Optional[List[str]] = None) -> Dict[str, 
                 "status": "created_with_warning",
                 "env_id": env_id,
                 "warning": f"Failed to add packages: {add_res.stderr}",
+                "hint": (
+                    "Environment created. You can retry installing packages using install_packages."
+                ),
             }
 
-    return {"status": "created", "env_id": env_id}
+    return {
+        "status": "created",
+        "env_id": env_id,
+        "hint": (
+            "Environment created. Use install_packages or execute_python "
+            "to proceed. Only call create_env once."
+        ),
+    }
 
 
 def _execute_python(
@@ -126,6 +166,10 @@ def _execute_python(
         "stdout": run_res.stdout,
         "stderr": run_res.stderr,
         "exit_code": run_res.returncode,
+        "hint": (
+            "If images or data files were generated, call "
+            "read_file(env_id='...', filename='...') to show them."
+        ),
     }
 
     if run_res.returncode != 0:
@@ -145,7 +189,15 @@ def _write_file(env_id: str, filename: str, content: str) -> Dict[str, Any]:
         file_path = get_safe_file_path(env_path, filename)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content)
-        return {"status": "success", "filename": filename, "bytes_written": len(content)}
+        return {
+            "status": "success",
+            "filename": filename,
+            "bytes_written": len(content),
+            "hint": (
+                f"To show this file to the user, call "
+                f"read_file(env_id='{env_id}', filename='{filename}')"
+            ),
+        }
     except Exception as e:
         raise RuntimeError(f"Error writing file: {str(e)}")
 
@@ -239,7 +291,13 @@ def _get_file_path(env_id: str, filename: str) -> Dict[str, Any]:
         file_path = get_safe_file_path(env_path, filename)
         if not file_path.exists():
             raise FileNotFoundError(f"File '{filename}' not found.")
-        return {"filename": filename, "absolute_path": str(file_path.absolute())}
+        return {
+            "filename": filename,
+            "absolute_path": str(file_path.absolute()),
+            "hint": (
+                "This is an internal path. To display the file to the user, you MUST use read_file."
+            ),
+        }
     except Exception as e:
         raise RuntimeError(f"Error getting file path: {str(e)}")
 
@@ -304,7 +362,10 @@ def _delete_env(env_id: str) -> Dict[str, Any]:
 # Register tools
 @mcp.tool()
 def create_env(env_id: str, packages: Optional[List[str]] = None) -> Dict[str, Any]:
-    """Create a new persistent Python environment."""
+    """
+    Create a new persistent Python environment.
+    Call this ONLY ONCE per task/thread. If it exists, reuse it.
+    """
     return _create_env(env_id, packages)
 
 
@@ -318,14 +379,17 @@ def execute_python(
     """
     Execute Python code in a persistent environment.
     If code is provided, it will be written to filename (default main.py) before execution.
-    Environment must be created first.
+    If images/files are generated, you MUST follow up with read_file to display them.
     """
     return _execute_python(env_id, code, filename, packages)
 
 
 @mcp.tool()
 def write_file(env_id: str, filename: str, content: str) -> Dict[str, Any]:
-    """Write a file to an environment."""
+    """
+    Write a file to an environment.
+    After writing, you MUST use read_file to show the content to the user if needed.
+    """
     return _write_file(env_id, filename, content)
 
 
@@ -333,6 +397,7 @@ def write_file(env_id: str, filename: str, content: str) -> Dict[str, Any]:
 def read_file(env_id: str, filename: str) -> Union[Dict[str, Any], ImageContent]:
     """
     Read a file from an environment.
+    Use this to show images, data, or code contents to the user.
     Returns structured data for text/binary files and ImageContent for images.
     """
     return _read_file(env_id, filename)
@@ -342,14 +407,17 @@ def read_file(env_id: str, filename: str) -> Union[Dict[str, Any], ImageContent]
 def list_files(env_id: str) -> Dict[str, Any]:
     """
     List all files in an environment (excluding virtualenv).
-    Returns a JSON object containing a list of relative paths.
+    Use this to discover files that might need to be read via read_file.
     """
     return _list_files(env_id)
 
 
 @mcp.tool()
 def get_file_path(env_id: str, filename: str) -> Dict[str, Any]:
-    """Get the absolute path to a requested file in an environment."""
+    """
+    Get the absolute path to a requested file in an environment.
+    This is for internal tool use. To show the file to the user, use read_file.
+    """
     return _get_file_path(env_id, filename)
 
 

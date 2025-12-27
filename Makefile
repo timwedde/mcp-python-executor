@@ -16,9 +16,13 @@ test:
 lint:
 	uv run ruff check .
 
-# Formatting
+# Formatting (fixes files)
 format:
 	uv run ruff format .
+
+# Formatting check (read-only)
+format-check:
+	uv run ruff format --check .
 
 # Type checking
 typecheck:
@@ -29,7 +33,7 @@ coverage: test
 	open htmlcov/index.html
 
 # Run all quality checks
-check-all: lint format typecheck test
+check-all: lint format-check typecheck test
 
 # Clean up local environments, virtual env, and coverage files
 clean:
