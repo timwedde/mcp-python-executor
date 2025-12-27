@@ -37,11 +37,18 @@ def run_uv_command(
     args: List[str], cwd: Optional[Path] = None
 ) -> subprocess.CompletedProcess:
     """Run a uv command and return the result."""
+    # Clean environment to avoid leakage from the server's own virtualenv
+    env = os.environ.copy()
+    env.pop("VIRTUAL_ENV", None)
+    env.pop("PYTHONPATH", None)
+    env.pop("PYTHONHOME", None)
+
     try:
         # Ensure uv is in the path
         result = subprocess.run(
             ["uv"] + args,
             cwd=cwd,
+            env=env,
             capture_output=True,
             text=True,
             timeout=300,
@@ -70,7 +77,9 @@ def _create_env(env_id: str, packages: Optional[List[str]] = None) -> str:
     if init_res.returncode != 0:
         # Cleanup on failure
         shutil.rmtree(env_path)
-        return f"Failed to initialize environment {env_id}:\n{init_res.stderr}"
+        raise RuntimeError(
+            f"Failed to initialize environment {env_id}:\n{init_res.stderr}"
+        )
 
     if packages:
         add_res = run_uv_command(["add"] + packages, cwd=env_path)
@@ -88,12 +97,16 @@ def _execute_python(
 ) -> str:
     env_path = get_env_path(env_id)
     if not env_path.exists():
-        return f"Error: Environment '{env_id}' does not exist. Please create it first using create_env."
+        raise ValueError(
+            f"Environment '{env_id}' does not exist. Please create it first using create_env."
+        )
 
     if packages:
         add_res = run_uv_command(["add"] + packages, cwd=env_path)
         if add_res.returncode != 0:
-            return f"Failed to add packages to environment {env_id}:\n{add_res.stderr}"
+            raise RuntimeError(
+                f"Failed to add packages to environment {env_id}:\n{add_res.stderr}"
+            )
 
     file_path = get_safe_file_path(env_path, filename)
 
@@ -102,22 +115,36 @@ def _execute_python(
         file_path.write_text(code)
 
     if not file_path.exists():
-        return f"Error: File '{filename}' not found in environment '{env_id}'."
+        raise FileNotFoundError(
+            f"File '{filename}' not found in environment '{env_id}'."
+        )
 
     run_res = run_uv_command(["run", str(file_path)], cwd=env_path)
-    output = []
-    if run_res.stdout:
-        output.append(run_res.stdout)
-    if run_res.stderr:
-        output.append(f"Stderr:\n{run_res.stderr}")
 
-    return "\n".join(output) if output else "Code executed successfully with no output."
+    combined_output = []
+    if run_res.stdout:
+        combined_output.append(run_res.stdout)
+    if run_res.stderr:
+        combined_output.append(run_res.stderr)
+
+    output_text = (
+        "\n".join(combined_output)
+        if combined_output
+        else "Code executed successfully with no output."
+    )
+
+    if run_res.returncode != 0:
+        raise RuntimeError(
+            f"Execution failed with exit code {run_res.returncode}:\n{output_text}"
+        )
+
+    return output_text
 
 
 def _write_file(env_id: str, filename: str, content: str) -> str:
     env_path = get_env_path(env_id)
     if not env_path.exists():
-        return f"Error: Environment '{env_id}' does not exist."
+        raise ValueError(f"Environment '{env_id}' does not exist.")
 
     try:
         file_path = get_safe_file_path(env_path, filename)
@@ -125,27 +152,27 @@ def _write_file(env_id: str, filename: str, content: str) -> str:
         file_path.write_text(content)
         return f"Successfully wrote to '{filename}' in environment '{env_id}'."
     except Exception as e:
-        return f"Error writing file: {str(e)}"
+        raise RuntimeError(f"Error writing file: {str(e)}")
 
 
 def _read_file(env_id: str, filename: str) -> str:
     env_path = get_env_path(env_id)
     if not env_path.exists():
-        return f"Error: Environment '{env_id}' does not exist."
+        raise ValueError(f"Environment '{env_id}' does not exist.")
 
     try:
         file_path = get_safe_file_path(env_path, filename)
         if not file_path.exists():
-            return f"Error: File '{filename}' not found."
+            raise FileNotFoundError(f"File '{filename}' not found.")
         return file_path.read_text()
     except Exception as e:
-        return f"Error reading file: {str(e)}"
+        raise RuntimeError(f"Error reading file: {str(e)}")
 
 
 def _list_files(env_id: str) -> str:
     env_path = get_env_path(env_id)
     if not env_path.exists():
-        return f"Error: Environment '{env_id}' does not exist."
+        raise ValueError(f"Environment '{env_id}' does not exist.")
 
     files = []
     for p in env_path.rglob("*"):
@@ -163,7 +190,7 @@ def _list_files(env_id: str) -> str:
 def _install_packages(env_id: str, packages: List[str]) -> str:
     env_path = get_env_path(env_id)
     if not env_path.exists():
-        return f"Error: Environment '{env_id}' does not exist."
+        raise ValueError(f"Environment '{env_id}' does not exist.")
 
     res = run_uv_command(["add"] + packages, cwd=env_path)
     if res.returncode == 0:
@@ -171,13 +198,13 @@ def _install_packages(env_id: str, packages: List[str]) -> str:
             f"Successfully installed {', '.join(packages)} in environment '{env_id}'."
         )
     else:
-        return f"Error installing packages:\n{res.stderr}"
+        raise RuntimeError(f"Error installing packages:\n{res.stderr}")
 
 
 def _remove_packages(env_id: str, packages: List[str]) -> str:
     env_path = get_env_path(env_id)
     if not env_path.exists():
-        return f"Environment '{env_id}' does not exist."
+        raise ValueError(f"Environment '{env_id}' does not exist.")
 
     res = run_uv_command(["remove"] + packages, cwd=env_path)
     if res.returncode == 0:
@@ -185,7 +212,7 @@ def _remove_packages(env_id: str, packages: List[str]) -> str:
             f"Successfully removed {', '.join(packages)} from environment '{env_id}'."
         )
     else:
-        return f"Error removing packages:\n{res.stderr}"
+        raise RuntimeError(f"Error removing packages:\n{res.stderr}")
 
 
 def _list_packages(env_id: str) -> str:

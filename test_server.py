@@ -51,8 +51,11 @@ print(f"Requests version: {requests.__version__}")
 
     # 7. Test failure without env_id
     print("\n7. Testing execution without existing environment (should fail)...")
-    res = _execute_python("non-existent-env", code="print('fail')")
-    print(res)
+    try:
+        res = _execute_python("non-existent-env", code="print('fail')")
+        print(res)
+    except Exception as e:
+        print(f"Caught expected error: {e}")
 
     # 8. Cleanup
     print("\n8. Deleting environment...")
