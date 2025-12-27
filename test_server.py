@@ -1,0 +1,63 @@
+from server import (
+    _create_env,
+    _execute_python,
+    _write_file,
+    _read_file,
+    _list_files,
+    _list_envs,
+    _delete_env,
+    _list_packages,
+)
+import os
+
+
+def test_new_flow():
+    env_id = "test-env-flow"
+    print(f"--- Testing New Flow for environment '{env_id}' ---")
+
+    # 1. Create environment
+    print("\n1. Creating environment...")
+    res = _create_env(env_id, packages=["requests"])
+    print(res)
+
+    # 2. List Envs
+    print("\n2. Listing envs...")
+    print(_list_envs())
+
+    # 3. Write a file
+    print("\n3. Writing data.txt...")
+    res = _write_file(env_id, "data.txt", "some sample data")
+    print(res)
+
+    # 4. Write and execute code that reads that file
+    print("\n4. Executing code to read data.txt...")
+    code = """
+import requests
+with open('data.txt', 'r') as f:
+    data = f.read()
+print(f"Data from file: {data}")
+print(f"Requests version: {requests.__version__}")
+"""
+    res = _execute_python(env_id, code=code, filename="read_test.py")
+    print(f"Result:\n{res}")
+
+    # 5. List files
+    print("\n5. Listing files...")
+    print(_list_files(env_id))
+
+    # 6. Read file back
+    print("\n6. Reading read_test.py content...")
+    print(_read_file(env_id, "read_test.py"))
+
+    # 7. Test failure without env_id
+    print("\n7. Testing execution without existing environment (should fail)...")
+    res = _execute_python("non-existent-env", code="print('fail')")
+    print(res)
+
+    # 8. Cleanup
+    print("\n8. Deleting environment...")
+    print(_delete_env(env_id))
+
+
+if __name__ == "__main__":
+    test_new_flow()
