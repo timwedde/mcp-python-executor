@@ -8,9 +8,11 @@ from typing import Any
 
 from fastmcp import FastMCP
 from fastmcp.dependencies import Depends
+from fastmcp.exceptions import ToolError
 from fastmcp.server.context import Context
+from fastmcp.server.dependencies import get_context
 from fastmcp.utilities.types import File, Image
-from mcp.types import ImageContent
+from mcp.types import Annotations, ImageContent, TextContent
 
 # Initialize FastMCP server
 mcp = FastMCP(
@@ -86,7 +88,7 @@ def _ensure_env(env_id: str) -> Path:
         if init_res.returncode != 0:
             # Cleanup on failure
             shutil.rmtree(env_path)
-            raise RuntimeError(f"Failed to initialize environment {env_id}:\n{init_res.stderr}")
+            raise ToolError(f"Failed to initialize environment {env_id}:\n{init_res.stderr}")
     return env_path
 
 
@@ -101,7 +103,7 @@ def _execute_python(
     if packages:
         add_res = run_uv_command(["add"] + packages, cwd=env_path)
         if add_res.returncode != 0:
-            raise RuntimeError(f"Failed to add packages to environment {env_id}:\n{add_res.stderr}")
+            raise ToolError(f"Failed to add packages to environment {env_id}:\n{add_res.stderr}")
 
     file_path = get_safe_file_path(env_path, filename)
 
@@ -118,15 +120,10 @@ def _execute_python(
         "stdout": run_res.stdout,
         "stderr": run_res.stderr,
         "exit_code": run_res.returncode,
-        "hint": (
-            "If images or data files were generated, call read_file(env_id='...', filename='...') to show them."
-        ),
     }
 
     if run_res.returncode != 0:
-        raise RuntimeError(
-            f"Execution failed with exit code {run_res.returncode}:\n{run_res.stderr}"
-        )
+        raise ToolError(f"Execution failed with exit code {run_res.returncode}:\n{run_res.stderr}")
 
     return output_data
 
@@ -142,17 +139,12 @@ def _write_file(env_id: str, filename: str, content: str) -> dict[str, Any]:
             "status": "success",
             "filename": filename,
             "bytes_written": len(content),
-            "hint": (
-                f"To show this file to the user, call read_file(env_id='{env_id}', filename='{filename}')"
-            ),
         }
     except Exception as e:
-        if isinstance(e, RuntimeError):
-            raise e
-        raise RuntimeError(f"Error writing file: {str(e)}")
+        raise ToolError(f"Error writing file: {str(e)}")
 
 
-def _read_file(env_id: str, filename: str):
+def _read_file(env_id: str, filename: str, annotations: Annotations):
     env_path = _ensure_env(env_id)
 
     try:
@@ -163,7 +155,7 @@ def _read_file(env_id: str, filename: str):
         # Check file size (limit to 10MB)
         file_size = file_path.stat().st_size
         if file_size > 10 * 1024 * 1024:
-            raise RuntimeError(
+            raise ToolError(
                 f"File '{filename}' is too large ({file_size} bytes). Max size is 10MB."
             )
 
@@ -181,10 +173,12 @@ def _read_file(env_id: str, filename: str):
                 is_binary = True
 
         if is_image:
-            return Image(data=data, format=mime_type or "image/png")
+            return Image(data=data, format=mime_type or "image/png", annotations=annotations)
 
         if is_binary:
-            return File(data=data, format=mime_type or "application/octet-stream")
+            return File(
+                data=data, format=mime_type or "application/octet-stream", annotations=annotations
+            )
 
         # Assume text
         try:
@@ -192,12 +186,10 @@ def _read_file(env_id: str, filename: str):
         except UnicodeDecodeError:
             content = data.decode("latin-1")
 
-        return content
+        return TextContent(type="text", text=content, annotations=annotations)
 
     except Exception as e:
-        if isinstance(e, (ValueError, FileNotFoundError, RuntimeError)):
-            raise e
-        raise RuntimeError(f"Error reading file: {str(e)}")
+        raise ToolError(f"Error reading file: {str(e)}")
 
 
 def _list_files(env_id: str) -> dict[str, Any]:
@@ -222,7 +214,7 @@ def _install_packages(env_id: str, packages: list[str]) -> dict[str, Any]:
     if res.returncode == 0:
         return {"status": "success", "env_id": env_id, "installed": packages}
     else:
-        raise RuntimeError(f"Error installing packages:\n{res.stderr}")
+        raise ToolError(f"Error installing packages:\n{res.stderr}")
 
 
 def _remove_packages(env_id: str, packages: list[str]) -> dict[str, Any]:
@@ -232,7 +224,7 @@ def _remove_packages(env_id: str, packages: list[str]) -> dict[str, Any]:
     if res.returncode == 0:
         return {"status": "success", "env_id": env_id, "removed": packages}
     else:
-        raise RuntimeError(f"Error removing packages:\n{res.stderr}")
+        raise ToolError(f"Error removing packages:\n{res.stderr}")
 
 
 def _list_packages(env_id: str) -> dict[str, Any]:
@@ -244,9 +236,9 @@ def _list_packages(env_id: str) -> dict[str, Any]:
             packages = json.loads(res.stdout)
             return {"env_id": env_id, "packages": packages}
         except json.JSONDecodeError:
-            raise RuntimeError("Failed to parse package list from uv.")
+            raise ToolError("Failed to parse package list from uv.")
     else:
-        raise RuntimeError(f"Error listing packages:\n{res.stderr}")
+        raise ToolError(f"Error listing packages:\n{res.stderr}")
 
 
 def _list_envs() -> dict[str, Any]:
@@ -273,15 +265,17 @@ def list_envs_resource() -> str:
     return json.dumps(envs, indent=2)
 
 
-def get_session_id(ctx: Context) -> str:
+def get_session_id() -> str:
+    ctx = get_context()
+
     meta = ctx.request_context.meta
     if not meta:
-        raise ValueError("No metadata found")
+        raise ToolError("No metadata found")
 
     session_id: str = getattr(meta, "session_id")
 
     if not session_id:
-        raise ValueError("Session ID not found")
+        raise ToolError("Session ID not found")
 
     return session_id
 
@@ -322,7 +316,7 @@ def read_file(
     """
     Read a file from the environment. Will be inserted into the context.
     """
-    return _read_file(env_id, filename)
+    return _read_file(env_id, filename, annotations=Annotations(audience=["assistant"]))
 
 
 @mcp.tool()
@@ -333,7 +327,7 @@ def present_file(
     """
     Present a file from the environment to the user. Will not be inserted into the context.
     """
-    return _read_file(env_id, filename)
+    return _read_file(env_id, filename, annotations=Annotations(audience=["user"]))
 
 
 @mcp.tool()
