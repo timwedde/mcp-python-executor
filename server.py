@@ -1,13 +1,15 @@
-import base64
 import json
 import mimetypes
 import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from fastmcp import FastMCP
+from fastmcp.dependencies import Depends
+from fastmcp.server.context import Context
+from fastmcp.utilities.types import File, Image
 from mcp.types import ImageContent
 
 # Initialize FastMCP server
@@ -15,21 +17,6 @@ mcp = FastMCP(
     "PythonExecutor",
     instructions="""
     You are an expert Python environment manager and code executor.
-
-    ENVIRONMENT PERSISTENCE:
-    - You MUST use exactly ONE `env_id` for the entire conversation.
-    - DO NOT create multiple environment IDs.
-    - DO NOT create a new environment for each request.
-    - The server handles environment creation automatically on your first call.
-    - Reuse your chosen `env_id` in all subsequent tool calls (execute_python, write_file, etc).
-
-    FILE RETRIEVAL & DISPLAY:
-    - Whenever code execution or file operations create or identify a file
-      (especially images like .png, .jpg), you MUST call `read_file` to retrieve
-      and show it to the user.
-    - NEVER just print the absolute path to the user; they cannot see local files on your host.
-    - If a tool result contains a file path, immediately follow up with `read_file`
-      for that specific file.
     """,
 )
 
@@ -58,7 +45,7 @@ def get_safe_file_path(env_path: Path, filename: str) -> Path:
     return requested_path
 
 
-def run_uv_command(args: List[str], cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
+def run_uv_command(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
     """Run a uv command and return the result."""
     # Clean environment to avoid leakage from the server's own virtualenv
     env = os.environ.copy()
@@ -105,10 +92,10 @@ def _ensure_env(env_id: str) -> Path:
 
 def _execute_python(
     env_id: str,
-    code: Optional[str] = None,
+    code: str | None = None,
     filename: str = "main.py",
-    packages: Optional[List[str]] = None,
-) -> Dict[str, Any]:
+    packages: list[str] | None = None,
+) -> dict[str, Any]:
     env_path = _ensure_env(env_id)
 
     if packages:
@@ -132,8 +119,7 @@ def _execute_python(
         "stderr": run_res.stderr,
         "exit_code": run_res.returncode,
         "hint": (
-            "If images or data files were generated, call "
-            "read_file(env_id='...', filename='...') to show them."
+            "If images or data files were generated, call read_file(env_id='...', filename='...') to show them."
         ),
     }
 
@@ -145,7 +131,7 @@ def _execute_python(
     return output_data
 
 
-def _write_file(env_id: str, filename: str, content: str) -> Dict[str, Any]:
+def _write_file(env_id: str, filename: str, content: str) -> dict[str, Any]:
     env_path = _ensure_env(env_id)
 
     try:
@@ -157,8 +143,7 @@ def _write_file(env_id: str, filename: str, content: str) -> Dict[str, Any]:
             "filename": filename,
             "bytes_written": len(content),
             "hint": (
-                f"To show this file to the user, call "
-                f"read_file(env_id='{env_id}', filename='{filename}')"
+                f"To show this file to the user, call read_file(env_id='{env_id}', filename='{filename}')"
             ),
         }
     except Exception as e:
@@ -167,7 +152,7 @@ def _write_file(env_id: str, filename: str, content: str) -> Dict[str, Any]:
         raise RuntimeError(f"Error writing file: {str(e)}")
 
 
-def _read_file(env_id: str, filename: str) -> Union[Dict[str, Any], ImageContent]:
+def _read_file(env_id: str, filename: str):
     env_path = _ensure_env(env_id)
 
     try:
@@ -196,18 +181,10 @@ def _read_file(env_id: str, filename: str) -> Union[Dict[str, Any], ImageContent
                 is_binary = True
 
         if is_image:
-            b64_data = base64.b64encode(data).decode("utf-8")
-            return ImageContent(type="image", data=b64_data, mimeType=mime_type or "image/png")
+            return Image(data=data, format=mime_type or "image/png")
 
         if is_binary:
-            b64_data = base64.b64encode(data).decode("utf-8")
-            m_type = mime_type or "application/octet-stream"
-            return {
-                "filename": filename,
-                "type": "binary",
-                "mime_type": m_type,
-                "content": b64_data,
-            }
+            return File(data=data, format=mime_type or "application/octet-stream")
 
         # Assume text
         try:
@@ -215,12 +192,7 @@ def _read_file(env_id: str, filename: str) -> Union[Dict[str, Any], ImageContent
         except UnicodeDecodeError:
             content = data.decode("latin-1")
 
-        return {
-            "filename": filename,
-            "type": "text",
-            "mime_type": mime_type or "text/plain",
-            "content": content,
-        }
+        return content
 
     except Exception as e:
         if isinstance(e, (ValueError, FileNotFoundError, RuntimeError)):
@@ -228,7 +200,7 @@ def _read_file(env_id: str, filename: str) -> Union[Dict[str, Any], ImageContent
         raise RuntimeError(f"Error reading file: {str(e)}")
 
 
-def _list_files(env_id: str) -> Dict[str, Any]:
+def _list_files(env_id: str) -> dict[str, Any]:
     env_path = _ensure_env(env_id)
 
     files = []
@@ -243,7 +215,7 @@ def _list_files(env_id: str) -> Dict[str, Any]:
     return {"env_id": env_id, "files": files}
 
 
-def _install_packages(env_id: str, packages: List[str]) -> Dict[str, Any]:
+def _install_packages(env_id: str, packages: list[str]) -> dict[str, Any]:
     env_path = _ensure_env(env_id)
 
     res = run_uv_command(["add"] + packages, cwd=env_path)
@@ -253,7 +225,7 @@ def _install_packages(env_id: str, packages: List[str]) -> Dict[str, Any]:
         raise RuntimeError(f"Error installing packages:\n{res.stderr}")
 
 
-def _remove_packages(env_id: str, packages: List[str]) -> Dict[str, Any]:
+def _remove_packages(env_id: str, packages: list[str]) -> dict[str, Any]:
     env_path = _ensure_env(env_id)
 
     res = run_uv_command(["remove"] + packages, cwd=env_path)
@@ -263,7 +235,7 @@ def _remove_packages(env_id: str, packages: List[str]) -> Dict[str, Any]:
         raise RuntimeError(f"Error removing packages:\n{res.stderr}")
 
 
-def _list_packages(env_id: str) -> Dict[str, Any]:
+def _list_packages(env_id: str) -> dict[str, Any]:
     env_path = _ensure_env(env_id)
 
     res = run_uv_command(["pip", "list", "--format", "json"], cwd=env_path)
@@ -277,7 +249,7 @@ def _list_packages(env_id: str) -> Dict[str, Any]:
         raise RuntimeError(f"Error listing packages:\n{res.stderr}")
 
 
-def _list_envs() -> Dict[str, Any]:
+def _list_envs() -> dict[str, Any]:
     if not ENVS_DIR.exists():
         return {"environments": []}
 
@@ -285,7 +257,7 @@ def _list_envs() -> Dict[str, Any]:
     return {"environments": sorted(envs)}
 
 
-def _delete_env(env_id: str) -> Dict[str, Any]:
+def _delete_env(env_id: str) -> dict[str, Any]:
     env_path = get_env_path(env_id)
     if env_path.exists() and env_path.is_dir():
         shutil.rmtree(env_path)
@@ -301,78 +273,103 @@ def list_envs_resource() -> str:
     return json.dumps(envs, indent=2)
 
 
+def get_session_id(ctx: Context) -> str:
+    meta = ctx.request_context.meta
+    if not meta:
+        raise ValueError("No metadata found")
+
+    session_id: str = getattr(meta, "session_id")
+
+    if not session_id:
+        raise ValueError("Session ID not found")
+
+    return session_id
+
+
 # Register tools
 @mcp.tool()
 def execute_python(
-    env_id: str,
-    code: Optional[str] = None,
+    code: str,
     filename: str = "main.py",
-    packages: Optional[List[str]] = None,
-) -> Dict[str, Any]:
+    packages: list[str] | None = None,
+    env_id: str = Depends(get_session_id),
+) -> dict[str, Any]:
     """
     Execute Python code in a persistent environment.
-    If code is provided, it will be written to filename (default main.py) before execution.
-    If images/files are generated, you MUST follow up with read_file to display them.
+    The code will be written to the given filename (default main.py) before execution.
     """
+
     return _execute_python(env_id, code, filename, packages)
 
 
 @mcp.tool()
-def write_file(env_id: str, filename: str, content: str) -> Dict[str, Any]:
+def write_file(
+    filename: str,
+    content: str,
+    env_id: str = Depends(get_session_id),
+) -> dict[str, Any]:
     """
-    Write a file to an environment.
-    After writing, you MUST use read_file to show the content to the user if needed.
+    Write a file to the environment.
     """
     return _write_file(env_id, filename, content)
 
 
 @mcp.tool()
-def read_file(env_id: str, filename: str) -> Union[Dict[str, Any], ImageContent]:
+def read_file(
+    filename: str,
+    env_id: str = Depends(get_session_id),
+) -> dict[str, Any] | ImageContent:
     """
-    Read a file from an environment.
-    Use this to show images, data, or code contents to the user.
-    Returns structured data for text/binary files and ImageContent for images.
+    Read a file from the environment. Will be inserted into the context.
     """
     return _read_file(env_id, filename)
 
 
 @mcp.tool()
-def list_files(env_id: str) -> Dict[str, Any]:
+def present_file(
+    filename: str,
+    env_id: str = Depends(get_session_id),
+) -> dict[str, Any] | ImageContent:
     """
-    List all files in an environment (excluding virtualenv).
-    Use this to discover files that might need to be read via read_file.
+    Present a file from the environment to the user. Will not be inserted into the context.
+    """
+    return _read_file(env_id, filename)
+
+
+@mcp.tool()
+def list_files(
+    env_id: str = Depends(get_session_id),
+) -> dict[str, Any]:
+    """
+    List all files in the environment (excluding virtualenv).
     """
     return _list_files(env_id)
 
 
 @mcp.tool()
-def install_packages(env_id: str, packages: List[str]) -> Dict[str, Any]:
-    """Install packages into a persistent environment."""
+def install_packages(
+    packages: list[str],
+    env_id: str = Depends(get_session_id),
+) -> dict[str, Any]:
+    """Install packages into the environment."""
     return _install_packages(env_id, packages)
 
 
 @mcp.tool()
-def remove_packages(env_id: str, packages: List[str]) -> Dict[str, Any]:
-    """Remove packages from a persistent environment."""
+def remove_packages(
+    packages: list[str],
+    env_id: str = Depends(get_session_id),
+) -> dict[str, Any]:
+    """Remove packages from the environment."""
     return _remove_packages(env_id, packages)
 
 
 @mcp.tool()
-def list_packages(env_id: str) -> Dict[str, Any]:
-    """List all installed packages in a persistent environment."""
+def list_packages(
+    env_id: str = Depends(get_session_id),
+) -> dict[str, Any]:
+    """List all installed packages in the environment."""
     return _list_packages(env_id)
-
-
-@mcp.tool()
-def list_envs() -> Dict[str, Any]:
-    """List all persistent environments."""
-    return _list_envs()
-
-
-@mcp.tool()
-def delete_env(env_id: str) -> Dict[str, Any]:
-    """Delete a persistent environment."""
-    return _delete_env(env_id)
 
 
 def main():
