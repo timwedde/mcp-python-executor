@@ -3,6 +3,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from fastmcp.exceptions import ToolError
+from mcp.types import Annotations, TextContent
 
 from server import (
     ENVS_DIR,
@@ -50,8 +52,8 @@ def test_read_file_not_found():
     env_id = "err-env"
     _ensure_env(env_id)
     try:
-        with pytest.raises(FileNotFoundError, match="not found"):
-            _read_file(env_id, "ghost.txt")
+        with pytest.raises(ToolError, match="not found"):
+            _read_file(env_id, "ghost.txt", annotations=Annotations(audience=["assistant"]))
     finally:
         shutil.rmtree(ENVS_DIR / env_id)
 
@@ -66,8 +68,8 @@ def test_read_file_too_large():
             f.seek(11 * 1024 * 1024 - 1)
             f.write(b"\0")
 
-        with pytest.raises(RuntimeError, match="too large"):
-            _read_file(env_id, "large.bin")
+        with pytest.raises(ToolError, match="too large"):
+            _read_file(env_id, "large.bin", annotations=Annotations(audience=["assistant"]))
     finally:
         shutil.rmtree(ENVS_DIR / env_id)
 
@@ -86,7 +88,7 @@ def test_execute_python_failure():
     env_id = "fail-exec-env"
     _ensure_env(env_id)
     try:
-        with pytest.raises(RuntimeError, match="Execution failed"):
+        with pytest.raises(ToolError, match="Execution failed"):
             _execute_python(env_id, code="import sys; sys.exit(1)")
     finally:
         shutil.rmtree(ENVS_DIR / env_id)
@@ -96,7 +98,7 @@ def test_execute_python_add_package_failure():
     env_id = "pkg-fail-env"
     _ensure_env(env_id)
     try:
-        with pytest.raises(RuntimeError, match="Failed to add packages"):
+        with pytest.raises(ToolError, match="Failed to add packages"):
             _execute_python(env_id, code="print(1)", packages=["non-existent-package-name-12345"])
     finally:
         shutil.rmtree(ENVS_DIR / env_id)
@@ -106,7 +108,7 @@ def test_install_packages_failure():
     env_id = "inst-fail-env"
     _ensure_env(env_id)
     try:
-        with pytest.raises(RuntimeError, match="Error installing packages"):
+        with pytest.raises(ToolError, match="Error installing packages"):
             _install_packages(env_id, ["non-existent-package-name-12345"])
     finally:
         shutil.rmtree(ENVS_DIR / env_id)
@@ -116,7 +118,7 @@ def test_remove_packages_failure():
     env_id = "rem-fail-env"
     _ensure_env(env_id)
     try:
-        with pytest.raises(RuntimeError, match="Error removing packages"):
+        with pytest.raises(ToolError, match="Error removing packages"):
             _remove_packages(env_id, ["non-existent-package-name-12345"])
     finally:
         shutil.rmtree(ENVS_DIR / env_id)
@@ -147,7 +149,7 @@ def test_ensure_env_init_failure_mocked(monkeypatch):
 
     monkeypatch.setattr(server, "run_uv_command", mock_uv_command)
 
-    with pytest.raises(RuntimeError, match="Failed to initialize"):
+    with pytest.raises(ToolError, match="Failed to initialize"):
         _ensure_env("mock-fail-env")
 
 
@@ -160,9 +162,9 @@ def test_read_file_unicode_error_fallback(test_env):
     with open(file_path, "wb") as f:
         f.write(b"\xe9")  # 'é' in latin-1
 
-    res = _read_file(test_env, "latin1.txt")
-    assert isinstance(res, dict)
-    assert res["content"] == "\xe9"
+    res = _read_file(test_env, "latin1.txt", annotations=Annotations(audience=["assistant"]))
+    assert isinstance(res, TextContent)
+    assert res.text == "\xe9"
 
 
 def test_list_packages_parse_error(monkeypatch):
@@ -177,7 +179,7 @@ def test_list_packages_parse_error(monkeypatch):
             return subprocess.CompletedProcess(args, 0, "not a json", "")
 
         monkeypatch.setattr(server, "run_uv_command", mock_uv_command)
-        with pytest.raises(RuntimeError, match="Failed to parse"):
+        with pytest.raises(ToolError, match="Failed to parse"):
             _list_packages(env_id)
     finally:
         shutil.rmtree(ENVS_DIR / env_id)
@@ -195,7 +197,7 @@ def test_list_packages_failure(monkeypatch):
             return subprocess.CompletedProcess(args, 1, "", "pip list failed")
 
         monkeypatch.setattr(server, "run_uv_command", mock_uv_command)
-        with pytest.raises(RuntimeError, match="Error listing packages"):
+        with pytest.raises(ToolError, match="Error listing packages"):
             _list_packages(env_id)
     finally:
         shutil.rmtree(ENVS_DIR / env_id)
@@ -205,7 +207,7 @@ def test_write_file_exception(monkeypatch):
     _ensure_env("write-fail-env")
     try:
         monkeypatch.setattr("server.get_safe_file_path", lambda x, y: 1 / 0)
-        with pytest.raises(RuntimeError, match="Error writing file"):
+        with pytest.raises(ToolError, match="Error writing file"):
             _write_file("write-fail-env", "test.txt", "data")
     finally:
         shutil.rmtree(ENVS_DIR / "write-fail-env")
@@ -217,8 +219,8 @@ def test_read_file_exception(monkeypatch):
     _ensure_env("read-fail-env")
     try:
         monkeypatch.setattr("server.get_safe_file_path", lambda x, y: 1 / 0)
-        with pytest.raises(RuntimeError, match="Error reading file"):
-            _read_file("read-fail-env", "test.txt")
+        with pytest.raises(ToolError, match="Error reading file"):
+            _read_file("read-fail-env", "test.txt", annotations=Annotations(audience=["assistant"]))
     finally:
         shutil.rmtree(ENVS_DIR / "read-fail-env")
 

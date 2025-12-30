@@ -1,8 +1,10 @@
 import base64
 
-from mcp.types import ImageContent
+from fastmcp.utilities.types import File, Image
+from mcp.types import Annotations, TextContent
 
 from server import (
+    BASE_PACKAGES,
     ENVS_DIR,
     _delete_env,
     _execute_python,
@@ -21,9 +23,9 @@ def test_write_and_read_file(test_env):
     res = _write_file(test_env, filename, content)
     assert res["status"] == "success"
 
-    read_res = _read_file(test_env, filename)
-    assert isinstance(read_res, dict)
-    assert read_res["content"] == content
+    read_res = _read_file(test_env, filename, annotations=Annotations(audience=["assistant"]))
+    assert isinstance(read_res, TextContent)
+    assert read_res.text == content
 
 
 def test_list_packages(test_env):
@@ -78,9 +80,8 @@ def test_image_detection(test_env):
     with open(env_path / "test.png", "wb") as f:
         f.write(png_data)
 
-    res = _read_file(test_env, "test.png")
-    assert isinstance(res, ImageContent)
-    assert res.mimeType == "image/png"
+    res = _read_file(test_env, "test.png", annotations=Annotations(audience=["assistant"]))
+    assert isinstance(res, Image)
 
 
 def test_binary_detection(test_env):
@@ -88,10 +89,8 @@ def test_binary_detection(test_env):
     with open(env_path / "test.bin", "wb") as f:
         f.write(b"\x00\x01\x02\x03")
 
-    res = _read_file(test_env, "test.bin")
-    assert isinstance(res, dict)
-    assert res["type"] == "binary"
-    assert "content" in res
+    res = _read_file(test_env, "test.bin", annotations=Annotations(audience=["assistant"]))
+    assert isinstance(res, File)
 
 
 def test_lazy_initialization():
@@ -106,3 +105,15 @@ def test_lazy_initialization():
 
     # Cleanup
     _delete_env(env_id)
+
+
+def test_base_packages_installed(test_env):
+    """Test that base packages are preinstalled in new environments."""
+    res = _list_packages(test_env)
+    package_names = [pkg["name"] for pkg in res["packages"]]
+    for base_pkg in BASE_PACKAGES:
+        # Handle optional dependencies like plotly[express]
+        pkg_name = base_pkg.split("[")[0]
+        assert pkg_name in package_names, (
+            f"Base package {pkg_name} not found in environment {test_env}"
+        )

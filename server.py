@@ -3,13 +3,13 @@ import mimetypes
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 from fastmcp import FastMCP
 from fastmcp.dependencies import Depends
 from fastmcp.exceptions import ToolError
-from fastmcp.server.context import Context
 from fastmcp.server.dependencies import get_context
 from fastmcp.utilities.types import File, Image
 from mcp.types import Annotations, ImageContent, TextContent
@@ -25,6 +25,17 @@ mcp = FastMCP(
 # Define base directory for environments
 BASE_DIR = Path.home() / ".mcp-python-executor"
 ENVS_DIR = BASE_DIR / "envs"
+
+# Base packages to preinstall in new environments
+BASE_PACKAGES = [
+    "numpy",
+    "pandas",
+    "plotly[express]",
+    "kaleido",
+    "requests",
+    "matplotlib",
+    "pillow",
+]
 
 # Ensure directories exist
 ENVS_DIR.mkdir(parents=True, exist_ok=True)
@@ -89,6 +100,15 @@ def _ensure_env(env_id: str) -> Path:
             # Cleanup on failure
             shutil.rmtree(env_path)
             raise ToolError(f"Failed to initialize environment {env_id}:\n{init_res.stderr}")
+        # Install base packages
+        add_res = run_uv_command(["add"] + BASE_PACKAGES, cwd=env_path)
+        if add_res.returncode != 0:
+            # Log warning but don't fail - environment is still usable
+            print(
+                f"Warning: Failed to install base packages in environment {env_id}:"
+                f"\n{add_res.stderr}",
+                file=sys.stderr,
+            )
     return env_path
 
 
